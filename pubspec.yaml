@@ -1,0 +1,12 @@
+name: angel_multiserver
+description: Support for running Angel instances across isolates for scaled applications.
+version: 1.0.0-dev
+author: Tobe O <thosakwe@gmail.com>
+homepage: https://github.com/angel-dart/angel_multiserver
+dependencies:
+  angel_framework: ">=1.0.0-dev <2.0.0"
+  json_god: ">=2.0.0-beta <3.0.0"
+  mongo_dart: ">= 0.2.7 < 1.0.0"
+dev_dependencies:
+  http: ">= 0.11.3 < 0.12.0"
+  test: ">= 0.12.13 < 0.13.0"
