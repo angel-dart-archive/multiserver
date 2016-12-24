@@ -21,6 +21,7 @@ abstract class SessionSynchronizer extends AngelPlugin {
     app
       ..before.add((RequestContext req, ResponseContext res) async {
         req.session.addAll(normalize(await loadSession(_getSessId(req))));
+        return true;
       })
       ..responseFinalizers.add((RequestContext req, res) async {
         var sessionId = _getSessId(req);
@@ -41,7 +42,7 @@ abstract class SessionSynchronizer extends AngelPlugin {
 
   normalizeValue(v) {
     if (v is String)
-      return Uri.decodeFull(v);//.replaceAll('+', ' ');
+      return Uri.decodeFull(v.replaceAll('+', ' '));
     else if (v is Map)
       return normalize(v);
     else if (v is List)
