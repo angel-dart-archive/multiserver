@@ -24,7 +24,7 @@ Future<Angel> spawnChildServer() async {
 }
 
 main() async {
-    var masterApp = new Angel();
+    var masterApp = new MultiServer();
     var loadBalancer = new LoadBalancer();
 
     loadBalancer
