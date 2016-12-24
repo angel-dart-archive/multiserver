@@ -1,60 +1,90 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:isolate';
 import 'dart:io';
 import 'package:angel_framework/angel_framework.dart';
+import 'package:string_scanner/string_scanner.dart';
 import 'defs.dart';
+
+final RegExp _decl = new RegExp(r'([^\s]+) ([^\s]+) HTTP/([^\n]+)');
+final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
 
 /// Distributes requests to different servers.
 ///
 /// The default implementation uses a simple round-robin.
-class LoadBalancer extends AngelMiddleware {
+class LoadBalancer {
   final HttpClient _client = new HttpClient();
   int _it = -1;
+  ServerSocket _socket;
   final List<Endpoint> endpoints = [];
 
+  final StreamController<Endpoint> _onBoot = new StreamController<Endpoint>();
   final StreamController<Endpoint> _onCrash = new StreamController<Endpoint>();
+  final StreamController _onError = new StreamController();
+  final StreamController<Socket> _onErrored = new StreamController<Socket>();
+  final StreamController<Socket> _onHandled = new StreamController<Socket>();
+  final StreamController<Socket> _onUnavailable =
+      new StreamController<Socket>();
+
+  /// Fired whenever a new server is started.
+  Stream<Endpoint> get onBoot => _onBoot.stream;
 
   /// Fired whenever a server fails to respond, and is assumed to have crashed.
   ///
   /// This can easily be hooked to spawn a new instance automatically.
   Stream<Endpoint> get onCrash => _onCrash.stream;
 
-  @override
-  Future<bool> call(RequestContext req, ResponseContext res) async {
-    Endpoint endpoint;
-    int tried = 0;
+  /// Fired whenever a failure to respond occurs. Use this to log errors.
+  Stream get onError => _onError.stream;
 
-    while (tried < endpoints.length) {
-      try {
-        tried++;
-        endpoint = await nextEndpoint();
+  /// Fired whenever a failure to respond occurs. Use this to deliver an error message.
+  Stream<Socket> get onErrored => _onErrored.stream;
 
-        if (endpoint == null) {
-          // If there is no server available, don't bother
-          // waiting any longer.
-          return true;
-        }
+  /// Fired whenever a client is responded to successfully.
+  Stream<Socket> get onHandled => _onHandled.stream;
 
-        res
-          ..willCloseItself = true
-          ..end();
+  /// Fired when there is no available server to service a request.
+  Stream<Socket> get onUnavailable => _onUnavailable.stream;
 
-        final rq = await _client.open(req.method, endpoint.address.address,
-            endpoint.port, req.uri.toString());
-        await rq.addStream(req.io);
-        final HttpClientResponse rs = await rq.close();
-        final HttpResponse r = res.io;
-        await pipeResponse(rs, r, res);
-        return false;
-      } catch (e, st) {
-        // Oops, that's a dead server!
-        endpoints.remove(endpoint);
-        _onCrash.add(endpoint);
-      }
-    }
+  /// The socket we are listening on.
+  ServerSocket get socket => _socket;
 
-    // If we couldn't forward the request, go on to the next handler
-    // ... Which may throw an error, who knows...
-    return true;
+  /// Interacts with an incoming client.
+  Future handleClient(Socket client) async {
+    client.listen(
+        (buf) async {
+          try {
+            var endpoint = await nextEndpoint();
+
+            if (endpoint == null) {
+              _onUnavailable.add(client);
+              return;
+            }
+
+            try {
+              var sock = await Socket.connect(endpoint.address, endpoint.port);
+              sock.add(buf);
+              await sock.flush();
+              var rs = await sock.close();
+              await client.addStream(rs);
+              await client.flush();
+              _onHandled.add(client);
+            } catch (e) {
+              endpoints.remove(endpoint);
+              _onCrash.add(endpoint);
+              rethrow;
+            }
+          } catch (e) {
+            _onError.add(e);
+            _onErrored.add(client);
+          }
+        },
+        onDone: () => client.close(),
+        onError: (e) {
+          _onError.add(e);
+          _onErrored.add(client);
+        },
+        cancelOnError: true);
   }
 
   /// Chooses the next endpoint to forward a request to.
@@ -88,10 +118,69 @@ class LoadBalancer extends AngelMiddleware {
     for (int i = 0; i < count; i++) {
       Angel app = await spawner();
       var server = await app.startServer();
-      endpoints.add(new Endpoint(server.address, server.port));
+      var endpoint = new Endpoint(server.address, server.port);
+      endpoints.add(endpoint);
+      _onBoot.add(endpoint);
       spawned.add(app);
     }
 
     return spawned;
+  }
+
+  /// Spawns a number of instances via isolates. This is the preferred method.
+  ///
+  /// Usually this will be a `bin/cluster.dart` file.
+  Future<List<Isolate>> spawnIsolates(Uri uri,
+      {int count: 1, List<String> args: const []}) async {
+    List<Isolate> spawned = [];
+
+    for (int i = 0; i < count; i++) {
+      var onEndpoint = new ReceivePort(), onError = new ReceivePort();
+
+      var isolate = await Isolate.spawnUri(uri, args, onEndpoint.sendPort,
+          onError: onError.sendPort, errorsAreFatal: true, paused: true);
+      spawned.add(isolate);
+
+      var onExit = new ReceivePort();
+      isolate.addOnExitListener(onExit.sendPort, response: 'FAILURE');
+      isolate.resume(isolate.pauseCapability);
+
+      onEndpoint.first.then((msg) async {
+        if (msg is List && msg.length >= 2) {
+          var lookup = await InternetAddress.lookup(msg[0]);
+
+          if (lookup.isEmpty) return;
+
+          var address = lookup.first;
+          int port = msg[1];
+          var endpoint = new Endpoint(address, port, isolate: isolate);
+          endpoints.add(endpoint);
+          _onBoot.add(endpoint);
+        }
+      });
+
+      onError.listen(_onError.add);
+
+      onExit.listen((_) {
+        var crashed =
+            endpoints.where((endpoint) => endpoint.isolate == isolate);
+
+        for (var endpoint in crashed) {
+          endpoints.remove(endpoint);
+          _onCrash.add(endpoint);
+        }
+      });
+    }
+
+    return spawned;
+  }
+
+  /// Starts listening at the given host and port.
+  ///
+  /// This defaults to `0.0.0.0:3000`.
+  Future<ServerSocket> startServer([address, int port = 3000]) async {
+    var socket = await ServerSocket.bind(
+        address ?? InternetAddress.ANY_IP_V4, port ?? 3000);
+    return _socket = socket..listen(handleClient);
   }
 }

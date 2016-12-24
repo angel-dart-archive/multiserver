@@ -18,17 +18,17 @@ class MongoSessionSynchronizer extends SessionSynchronizer {
   }
 
   @override
-  Future saveSession(HttpSession session) async {
+  Future saveSession(String id, HttpSession session) async {
     var data = {};
 
     for (var key in session.keys.where((key) => key is String)) {
       data[key] = god.serializeObject(session[key]);
     }
 
-    var existing = await collection.findOne(where.eq('sessionId', session.id));
+    var existing = await collection.findOne(where.eq('sessionId', id));
 
     if (existing == null) {
-      await collection.insert(data..['sessionId'] = session.id);
+      await collection.insert(data..['sessionId'] = id);
     } else {
       ObjectId id = existing['_id'];
       await collection.update(where.id(id), data);

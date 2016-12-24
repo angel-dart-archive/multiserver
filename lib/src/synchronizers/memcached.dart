@@ -16,30 +16,32 @@ class MemcachedSessionSynchronizer extends SessionSynchronizer {
 
   @override
   Future<Map> loadSession(String id) async {
-    var result = await store.gets(id);
+    try {
+      var result = await store.gets(id);
 
-    if (result == null || result.data?.isNotEmpty != true) {
-      return {};
-    } else {
-      _cas = result.cas;
-      var json = JSON.decode(UTF8.decode(result.data));
+      if (result == null || result.data?.isNotEmpty != true) {
+        return {};
+      } else {
+        _cas = result.cas;
+        var json = JSON.decode(UTF8.decode(result.data));
 
-      if (json is Map) return json;
-    }
+        if (json is Map) return json;
+      }
+    } catch (e) {}
 
     return {};
   }
 
   @override
-  Future saveSession(HttpSession session) async {
+  Future saveSession(String id, HttpSession session) async {
     var data = {};
 
     for (var key in session.keys.where((key) => key is String)) {
       data[key] = god.serializeObject(session[key]);
     }
 
-    var result = await store.set(session.id, UTF8.encode(god.serialize(data)),
-        cas: _cas);
+    var result =
+        await store.set(id, UTF8.encode(god.serialize(data)), cas: _cas);
 
     if (!result)
       throw new SessionSynchronizerException(

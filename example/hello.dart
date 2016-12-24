@@ -1,38 +1,42 @@
-import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'package:angel_framework/angel_framework.dart';
 import 'package:angel_multiserver/angel_multiserver.dart';
 
-Future<Angel> spawnChildServer() async {
-  // Return a new instance of your
-  // main application here.
-  var app = new Angel();
-  return app..get('/', 'Hello from instance #${app.hashCode}!');
-}
+final Uri cluster = Platform.script.resolve('cluster.dart');
+final errorPage = GZIP.encode(UTF8.encode('''
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>503 Service Unavailable</title>
+          </head>
+          <body>
+            <h1>503 Service Unavailable</h1>
+            <i>There is no server available to service your request.</i>
+          </body>
+        </html>
+        '''));
 
 main() async {
-  var masterApp = new MultiServer();
   var loadBalancer = new LoadBalancer();
+  await loadBalancer.spawnIsolates(cluster, count: 3);
 
   loadBalancer
-    ..spawn(spawnChildServer, count: 3)
-    ..onCrash.listen((endpoint) async {
-      // When a server fails to respond, it is removed
-      // from the list, and an event is fired.
-      // Use this to automatically re-spawn your application.
-      await loadBalancer.spawn(spawnChildServer);
+    ..onCrash.listen((_) {
+      // Auto-spawn a new instance on crash
+      loadBalancer.spawnIsolates(cluster);
+    })
+    ..onUnavailable.listen((socket) async {
+      socket
+        ..writeln('HTTP/1.1 503 Service Unavailable')
+        ..writeln(HttpDate.format(new DateTime.now()))
+        ..writeln('Content-Encoding: gzip')
+        ..writeln()
+        ..add(errorPage)
+        ..writeln();
+      await socket.close();
     });
 
-  masterApp
-    ..before.add(loadBalancer)
-    ..all('*', (req, res) async {
-      res
-        ..statusCode = HttpStatus.SERVICE_UNAVAILABLE
-        ..write('There is no server available to service the request.')
-        ..end();
-    });
-
-  var server =
-      await masterApp.startServer(InternetAddress.LOOPBACK_IP_V4, 3000);
-  print('Load balancer listening at ${server.address.address}:${server.port}');
+  var server = await loadBalancer.startServer();
+  print(
+      'Load balancer listening at http://${server.address.address}:${server.port}');
 }

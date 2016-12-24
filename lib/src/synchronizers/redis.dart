@@ -21,16 +21,18 @@ class RedisSessionSynchronizer extends SessionSynchronizer {
 
       if (json is Map) return json;
     }
+
+    return {};
   }
 
   @override
-  Future saveSession(HttpSession session) {
+  Future saveSession(String id, HttpSession session) {
     var data = {};
 
     for (var key in session.keys.where((key) => key is String)) {
       data[key] = god.serializeObject(session[key]);
     }
 
-    return client.set(session.id, god.serialize(data));
+    return client.set(id, god.serialize(data));
   }
 }
