@@ -7,7 +7,7 @@ import 'package:angel_diagnostics/angel_diagnostics.dart';
 import 'package:angel_framework/angel_framework.dart';
 import 'package:angel_multiserver/angel_multiserver.dart';
 
-final Uri cluster = Platform.script.resolve('cluster.dart');
+final Uri cluster = Platform.script.resolve('clusters/hello.dart');
 
 final error502 = GZIP.encode(UTF8.encode('''
         <!DOCTYPE html>

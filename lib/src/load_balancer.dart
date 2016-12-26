@@ -78,7 +78,7 @@ class LoadBalancer extends Angel {
   ServerSocket get socket => _socket;
 
   /// Forwards a request to the [endpoint].
-  Future dispatchRequest(HttpRequest request, Endpoint endpoint) async {
+  Future<HttpClientResponse> dispatchRequest(HttpRequest request, Endpoint endpoint) async {
     var rq = await _client.open(request.method, endpoint.address.address,
         endpoint.port, request.uri.toString());
 

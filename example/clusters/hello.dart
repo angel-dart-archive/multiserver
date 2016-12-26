@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'package:angel_compress/angel_compress.dart';
