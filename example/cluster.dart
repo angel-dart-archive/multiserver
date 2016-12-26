@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'package:angel_compress/angel_compress.dart';
 import 'package:angel_diagnostics/angel_diagnostics.dart';
 import 'package:angel_framework/angel_framework.dart';
 import 'package:angel_multiserver/angel_multiserver.dart';
@@ -11,6 +13,12 @@ main(args, SendPort sendPort) async {
   var client =
       await MemcachedClient.connect([new SocketAddress('127.0.0.1', 11211)]);
   await app.configure(new MemcachedSessionSynchronizer(client));
+
+  app.before.add((req, res) async {
+    print('Incoming headers: ${req.headers}');
+    print('Incoming body: ${req.body}');
+    return true;
+  });
 
   app.get('/', (req, res) async {
     res
@@ -39,6 +47,7 @@ main(args, SendPort sendPort) async {
       </body>
     </html>
     ''');
+    return false;
   });
 
   app.post('/session', (RequestContext req, res) async {
@@ -55,11 +64,16 @@ main(args, SendPort sendPort) async {
     return res.redirect('/');
   });
 
-  app.responseFinalizers.add((req, res) async {
-    print('Outgoing cookies: ${res.cookies}');
-  });
+  app.all('*', () => throw new AngelHttpException.NotFound());
+
+  app.responseFinalizers
+    ..add((req, res) async {
+      print('Outgoing cookies: ${res.cookies}');
+      print('Outgoing headers: ${res.headers}');
+    })
+    ..add(gzip());
 
   var server =
       await new DiagnosticsServer(app, new File('log.txt')).startServer();
-  sendPort.send([server.address.address, server.port]);
+  sendPort?.send([server.address.address, server.port]);
 }

@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:isolate';
 import 'dart:io';
 import 'package:angel_framework/angel_framework.dart';
-import 'package:string_scanner/string_scanner.dart';
+import 'package:random_string/random_string.dart' as rs;
+import 'algorithm.dart';
 import 'defs.dart';
+import 'interceptor.dart';
 
 final RegExp _decl = new RegExp(r'([^\s]+) ([^\s]+) HTTP/([^\n]+)');
 final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
@@ -12,19 +13,49 @@ final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
 /// Distributes requests to different servers.
 ///
 /// The default implementation uses a simple round-robin.
-class LoadBalancer {
+class LoadBalancer extends Angel {
+  String _certificateChainPath, _serverKeyPath;
   final HttpClient _client = new HttpClient();
-  int _it = -1;
+  bool _secure = false;
   ServerSocket _socket;
+
+  /// Distributes requests between servers.
+  final LoadBalancingAlgorithm algorithm;
+
+  int index = -1;
+
+  /// A dynamic list of endpoints registered with the load balancer.
+  ///
+  /// Do not modify, please. :)
   final List<Endpoint> endpoints = [];
+
+  /// Middleware to run before requests.
+  final List<RequestInterceptor> requestInterceptors = [];
+
+  /// Middleware to run after dispatched responses are received.
+  final List<RequestInterceptor> responseInterceptors = [];
+
+  /// Used for [STICKY_SESSION].
+  final Map<InternetAddress, Endpoint> sticky = {};
+
+  /// If set to `true`, the load balancer will manage
+  /// synchronized sessions.
+  final bool sessionAware;
+
+  LoadBalancer({this.algorithm: ROUND_ROBIN, this.sessionAware: true});
+
+  LoadBalancer.secure(this._certificateChainPath, this._serverKeyPath,
+      {this.algorithm: ROUND_ROBIN, this.sessionAware: true}) {
+    _secure = true;
+  }
 
   final StreamController<Endpoint> _onBoot = new StreamController<Endpoint>();
   final StreamController<Endpoint> _onCrash = new StreamController<Endpoint>();
-  final StreamController _onError = new StreamController();
-  final StreamController<Socket> _onErrored = new StreamController<Socket>();
-  final StreamController<Socket> _onHandled = new StreamController<Socket>();
-  final StreamController<Socket> _onUnavailable =
-      new StreamController<Socket>();
+  final StreamController<HttpRequest> _onErrored =
+      new StreamController<HttpRequest>();
+  final StreamController _fatalErrorStream = new StreamController();
+  final StreamController<HttpRequest> _onHandled =
+      new StreamController<HttpRequest>();
 
   /// Fired whenever a new server is started.
   Stream<Endpoint> get onBoot => _onBoot.stream;
@@ -34,97 +65,73 @@ class LoadBalancer {
   /// This can easily be hooked to spawn a new instance automatically.
   Stream<Endpoint> get onCrash => _onCrash.stream;
 
-  /// Fired whenever a failure to respond occurs. Use this to log errors.
-  Stream get onError => _onError.stream;
-
   /// Fired whenever a failure to respond occurs. Use this to deliver an error message.
-  Stream<Socket> get onErrored => _onErrored.stream;
+  Stream<HttpRequest> get onErrored => _onErrored.stream;
+
+  /// Fired when a fatal error occurs while trying to dispatch a request.
+  Stream get onDistributionError => _fatalErrorStream.stream;
 
   /// Fired whenever a client is responded to successfully.
-  Stream<Socket> get onHandled => _onHandled.stream;
-
-  /// Fired when there is no available server to service a request.
-  Stream<Socket> get onUnavailable => _onUnavailable.stream;
+  Stream<HttpRequest> get onHandled => _onHandled.stream;
 
   /// The socket we are listening on.
   ServerSocket get socket => _socket;
 
-  /// Interacts with an incoming client.
-  Future handleClient(Socket client) async {
-    client.listen(
-        (buf) async {
-          try {
-            var endpoint = await nextEndpoint();
+  /// Forwards a request to the [endpoint].
+  Future dispatchRequest(HttpRequest request, Endpoint endpoint) async {
+    var rq = await _client.open(request.method, endpoint.address.address,
+        endpoint.port, request.uri.toString());
 
-            if (endpoint == null) {
-              _onUnavailable.add(client);
-              return;
-            }
+    if (request.headers.contentType != null)
+      rq.headers.contentType = request.headers.contentType;
 
-            try {
-              var sock = await Socket.connect(endpoint.address, endpoint.port);
-              sock.add(buf);
-              await sock.flush();
-              var rs = await sock.close();
-              await client.addStream(rs);
-              await client.flush();
-              _onHandled.add(client);
-            } catch (e) {
-              endpoints.remove(endpoint);
-              _onCrash.add(endpoint);
-              rethrow;
-            }
-          } catch (e) {
-            _onError.add(e);
-            _onErrored.add(client);
-          }
-        },
-        onDone: () => client.close(),
-        onError: (e) {
-          _onError.add(e);
-          _onErrored.add(client);
-        },
-        cancelOnError: true);
+    rq.cookies.addAll(request.cookies);
+    rq.headers
+      ..add(HttpHeaders.ACCEPT, request.headers[HttpHeaders.ACCEPT] ?? '*/*')
+      ..add('X-Forwarded-For', request.connectionInfo.remoteAddress.address)
+      ..add('X-Forwarded-Port', request.connectionInfo.remotePort.toString())
+      ..add(
+          'X-Forwarded-Host',
+          request.headers.host ??
+              request.headers.value(HttpHeaders.HOST) ??
+              'none')
+      ..add('X-Forwarded-Proto', _secure ? 'https' : 'http');
+    await rq.addStream(request);
+    return await rq.close();
   }
 
-  /// Chooses the next endpoint to forward a request to.
-  Future<Endpoint> nextEndpoint() async {
-    if (endpoints.isEmpty) return null;
+  @override
+  Future handleRequest(HttpRequest request) async {
+    try {
+      for (var interceptor in requestInterceptors) {
+        if (await interceptor(request) != true) return;
+      }
 
-    if (_it++ < endpoints.length - 1)
-      return endpoints[_it];
-    else
-      return endpoints[_it = 0];
-  }
+      var endpoint = await algorithm.nextEndpoint(this, request);
 
-  /// Forwards [rs] to [r].
-  ///
-  /// Override this to compress the response, etc.
-  Future pipeResponse(
-      HttpClientResponse rs, HttpResponse r, ResponseContext res) async {
-    r.statusCode = rs.statusCode;
-    r.headers.contentType = rs.headers.contentType;
-    await r.addStream(rs);
-    await r.flush();
-    await r.close();
-  }
+      if (endpoint == null) {
+        await super.handleRequest(request);
+        return;
+      }
 
-  /// Spawns a number of Angel instances.
-  ///
-  /// `spawner` should return an [Angel] instance, or [Future]<[Angel]>.
-  Future<List<Angel>> spawn(spawner(), {int count: 1}) async {
-    List<Angel> spawned = [];
+      try {
+        var rs = await dispatchRequest(request, endpoint);
 
-    for (int i = 0; i < count; i++) {
-      Angel app = await spawner();
-      var server = await app.startServer();
-      var endpoint = new Endpoint(server.address, server.port);
-      endpoints.add(endpoint);
-      _onBoot.add(endpoint);
-      spawned.add(app);
+        for (var interceptor in responseInterceptors) {
+          if (await interceptor(response) != true) return;
+        }
+
+        final HttpResponse r = request.response;
+        await algorithm.pipeResponse(rs, r);
+        return;
+      } catch (e) {
+        triggerCrash(endpoint);
+        rethrow;
+      }
+    } catch (e) {
+      _fatalErrorStream.add(e);
+      _onErrored.add(request);
     }
-
-    return spawned;
   }
 
   /// Spawns a number of instances via isolates. This is the preferred method.
@@ -145,7 +152,7 @@ class LoadBalancer {
       isolate.addOnExitListener(onExit.sendPort, response: 'FAILURE');
       isolate.resume(isolate.pauseCapability);
 
-      onEndpoint.first.then((msg) async {
+      onEndpoint.listen((msg) async {
         if (msg is List && msg.length >= 2) {
           var lookup = await InternetAddress.lookup(msg[0]);
 
@@ -154,33 +161,40 @@ class LoadBalancer {
           var address = lookup.first;
           int port = msg[1];
           var endpoint = new Endpoint(address, port, isolate: isolate);
-          endpoints.add(endpoint);
           _onBoot.add(endpoint);
+          algorithm.onEndpoint(this, endpoint);
         }
       });
 
-      onError.listen(_onError.add);
+      onError.listen(_fatalErrorStream.add);
 
       onExit.listen((_) {
-        var crashed =
-            endpoints.where((endpoint) => endpoint.isolate == isolate);
-
-        for (var endpoint in crashed) {
-          endpoints.remove(endpoint);
-          _onCrash.add(endpoint);
-        }
+        algorithm.onCrashed(this, isolate);
       });
     }
 
     return spawned;
   }
 
-  /// Starts listening at the given host and port.
-  ///
-  /// This defaults to `0.0.0.0:3000`.
-  Future<ServerSocket> startServer([address, int port = 3000]) async {
-    var socket = await ServerSocket.bind(
-        address ?? InternetAddress.ANY_IP_V4, port ?? 3000);
-    return _socket = socket..listen(handleClient);
+  @override
+  Future<HttpServer> startServer([InternetAddress address, int port]) {
+    if (_secure) {
+      var certificateChain =
+          Platform.script.resolve(_certificateChainPath).toFilePath();
+      var serverKey = Platform.script.resolve(_serverKeyPath).toFilePath();
+      var serverContext = new SecurityContext();
+      serverContext.useCertificateChain(certificateChain);
+      serverContext.usePrivateKey(serverKey,
+          password: password ?? rs.randomAlphaNumeric(8));
+
+      return HttpServer.bindSecure(
+          address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0, serverContext);
+    }
+
+    return super.startServer(address, port);
+  }
+
+  void triggerCrash(Endpoint endpoint) {
+    _onCrash.add(endpoint);
   }
 }

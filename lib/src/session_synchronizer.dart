@@ -34,7 +34,7 @@ abstract class SessionSynchronizer extends AngelPlugin {
     var map = {};
 
     other.forEach((k, v) {
-      map[Uri.decodeFull(k)] = normalizeValue(v);
+      map[normalizeValue(k.toString())] = normalizeValue(v);
     });
 
     return map;
