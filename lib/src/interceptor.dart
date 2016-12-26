@@ -16,7 +16,7 @@ typedef bool CacheFilter(HttpRequest request);
 /// Caches static content to improve response time.
 class RequestCache extends AngelPlugin {
   /// Contains static, pre-fetched data that will automatically be sent on future requests.
-  final Map<String, List<int>> cache = {'/': 'Poop on ya 256 lol'.codeUnits};
+  final Map<String, List<int>> cache = {};
 
   /// Contains static, pre-fetched headers that will automatically be sent on future requests.
   final Map<String, HttpHeaders> headers = {};
