@@ -86,8 +86,13 @@ class LoadBalancer extends Angel {
       rq.headers.contentType = request.headers.contentType;
 
     rq.cookies.addAll(request.cookies);
+    copyHeaders(request.headers, rq.headers);
+
+    if (request.headers[HttpHeaders.ACCEPT] == null) {
+      request.headers.set(HttpHeaders.ACCEPT, '*/*');
+    }
+
     rq.headers
-      ..add(HttpHeaders.ACCEPT, request.headers[HttpHeaders.ACCEPT] ?? '*/*')
       ..add('X-Forwarded-For', request.connectionInfo.remoteAddress.address)
       ..add('X-Forwarded-Port', request.connectionInfo.remotePort.toString())
       ..add(

@@ -27,3 +27,21 @@ class Endpoint {
   @override
   String toString() => '${address.address}:$port';
 }
+
+/// Copies HTTP headers ;)
+void copyHeaders(HttpHeaders from, HttpHeaders to) {
+  to
+    ..chunkedTransferEncoding = from.chunkedTransferEncoding
+    ..contentLength = from.contentLength
+    ..contentType = from.contentType
+    ..date = from.date
+    ..expires = from.expires
+    ..host = from.host
+    ..ifModifiedSince = from.ifModifiedSince
+    ..persistentConnection = from.persistentConnection
+    ..port = from.port;
+
+  from.forEach((header, values) {
+    to.set(header, values);
+  });
+}
