@@ -8,12 +8,22 @@ Dedicated WebSocket support will come eventually.
 
 See the [examples](example);
 
+# Response Caching
+This plug-in works on any `Angel` server, not just a `LoadBalancer`.
+It caches responses, to lower future response times.
+
 # Load Balancing
 
-This package exposes a `LoadBalancer` class. 
-The default implementation is a simple round-robin, but
+This package exposes a `LoadBalancer` class, which extends `Angel`,
+and can be used like a normal server.
+
+The default algorithm is a simple round-robin, but
 it can be extended for your own purposes.
 
+Three load-balancing algorithms are included:
+* `ROUND_ROBIN`
+* `STICKY_SESSION`
+* `FASTEST_RESPONSE`
 
 # Session Synchronization
 

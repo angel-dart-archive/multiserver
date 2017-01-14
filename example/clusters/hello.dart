@@ -11,13 +11,6 @@ main(args, SendPort sendPort) async {
 
   var client =
       await MemcachedClient.connect([new SocketAddress('127.0.0.1', 11211)]);
-  await app.configure(new MemcachedSessionSynchronizer(client));
-
-  app.before.add((req, res) async {
-    print('Incoming headers: ${req.headers}');
-    print('Incoming body: ${req.body}');
-    return true;
-  });
 
   app.get('/', (req, res) async {
     res
@@ -51,7 +44,7 @@ main(args, SendPort sendPort) async {
 
   app.post('/session', (RequestContext req, res) async {
     if (!req.body.containsKey('key') || !req.body.containsKey('value')) {
-      throw new AngelHttpException.BadRequest();
+      throw new AngelHttpException.badRequest();
     }
 
     req.session[req.body['key']] = req.body['value'];
@@ -63,16 +56,11 @@ main(args, SendPort sendPort) async {
     return res.redirect('/');
   });
 
-  app.all('*', () => throw new AngelHttpException.NotFound());
+  app.all('*', () => throw new AngelHttpException.notFound());
 
-  app.responseFinalizers
-    ..add((req, res) async {
-      print('Outgoing cookies: ${res.cookies}');
-      print('Outgoing headers: ${res.headers}');
-    })
-    ..add(gzip());
-
-  var server =
-      await new DiagnosticsServer(app, new File('log.txt')).startServer();
+  app.responseFinalizers.add(gzip());
+  await app.configure(new MemcachedSessionSynchronizer(client));
+  await app.configure(logRequests(new File('log.txt')));
+  var server = await app.startServer();
   sendPort?.send([server.address.address, server.port]);
 }

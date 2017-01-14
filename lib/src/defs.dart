@@ -34,12 +34,24 @@ void copyHeaders(HttpHeaders from, HttpHeaders to) {
     ..chunkedTransferEncoding = from.chunkedTransferEncoding
     ..contentLength = from.contentLength
     ..contentType = from.contentType
-    ..date = from.date
-    ..expires = from.expires
     ..host = from.host
-    ..ifModifiedSince = from.ifModifiedSince
     ..persistentConnection = from.persistentConnection
     ..port = from.port;
+
+  if (from.date != null)
+    to.date = from.date;
+  else
+    to.date = new DateTime.now();
+
+  if (from.expires != null)
+    to.expires = from.expires;
+  else
+    to.expires = new DateTime.now();
+
+  if (from.ifModifiedSince != null)
+    to.ifModifiedSince = from.ifModifiedSince;
+  else
+    to.ifModifiedSince = new DateTime.now();
 
   from.forEach((header, values) {
     to.set(header, values);

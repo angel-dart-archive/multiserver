@@ -38,33 +38,21 @@ main() async {
   var loadBalancer = new LoadBalancer(algorithm: STICKY_SESSION);
   await loadBalancer.spawnIsolates(cluster, count: 5);
 
-  loadBalancer
-    ..onCrash.listen((_) {
-      // Auto-spawn a new instance on crash
-      loadBalancer.spawnIsolates(cluster);
-    })
-    ..onDistributionError.listen((e) {
-      stderr..writeln('This error caused a crash:')..writeln(e);
-    })
-    ..onErrored.listen((request) async {
-      var rs = request.response
-        ..headers.contentType = ContentType.HTML
-        ..statusCode = HttpStatus.BAD_GATEWAY
-        ..headers.set(HttpHeaders.CONTENT_ENCODING, 'gzip')
-        ..add(error502);
-      await rs.close();
-    });
+  // Auto-spawn a new instance on crash
+  loadBalancer.onCrash.listen((_) {
+    loadBalancer.spawnIsolates(cluster);
+  });
 
-  // Fallback content
-  loadBalancer
-    ..all('*', (req, ResponseContext res) async {
-      res
-        ..contentType = ContentType.HTML
-        ..statusCode = HttpStatus.SERVICE_UNAVAILABLE
-        ..write(error503);
-    })
-    ..responseFinalizers.add(gzip());
+  // Fallback content is easy - just use normal Angel handlers!
+  loadBalancer.after.add((req, ResponseContext res) async {
+    res
+      ..contentType = ContentType.HTML
+      ..statusCode = HttpStatus.SERVICE_UNAVAILABLE
+      ..write(error503);
+  });
 
-  await new DiagnosticsServer(loadBalancer, new File('log.txt'))
-      .startServer(InternetAddress.ANY_IP_V4, 3000);
+  loadBalancer.responseFinalizers.add(gzip());
+  await loadBalancer.configure(logRequests(new File('log.txt')));
+  var server = await loadBalancer.startServer(InternetAddress.ANY_IP_V4, 3000);
+  print('Server listening at http://${server.address.address}:${server.port}');
 }

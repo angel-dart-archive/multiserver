@@ -5,7 +5,6 @@ import 'package:angel_framework/angel_framework.dart';
 import 'package:random_string/random_string.dart' as rs;
 import 'algorithm.dart';
 import 'defs.dart';
-import 'interceptor.dart';
 
 final RegExp _decl = new RegExp(r'([^\s]+) ([^\s]+) HTTP/([^\n]+)');
 final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
@@ -14,48 +13,43 @@ final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
 ///
 /// The default implementation uses a simple round-robin.
 class LoadBalancer extends Angel {
+  LoadBalancingAlgorithm _algorithm;
   String _certificateChainPath, _serverKeyPath;
   final HttpClient _client = new HttpClient();
   bool _secure = false;
-  ServerSocket _socket;
+  HttpServer _server;
 
   /// Distributes requests between servers.
-  final LoadBalancingAlgorithm algorithm;
+  LoadBalancingAlgorithm get algorithm => _algorithm;
 
-  int index = -1;
-
-  /// A dynamic list of endpoints registered with the load balancer.
-  ///
-  /// Do not modify, please. :)
-  final List<Endpoint> endpoints = [];
-
-  /// Middleware to run before requests.
-  final List<RequestInterceptor> requestInterceptors = [];
-
-  /// Middleware to run after dispatched responses are received.
-  final List<RequestInterceptor> responseInterceptors = [];
-
-  /// Used for [STICKY_SESSION].
-  final Map<InternetAddress, Endpoint> sticky = {};
+  @override
+  HttpServer get httpServer => _server ?? super.httpServer;
 
   /// If set to `true`, the load balancer will manage
   /// synchronized sessions.
   final bool sessionAware;
 
-  LoadBalancer({this.algorithm: ROUND_ROBIN, this.sessionAware: true});
+  LoadBalancer(
+      {LoadBalancingAlgorithm algorithm,
+      bool debug: false,
+      this.sessionAware: true})
+      : super(debug: debug == true) {
+    _algorithm = algorithm ?? ROUND_ROBIN;
+    storeOriginalBuffer = true;
+  }
 
   LoadBalancer.secure(this._certificateChainPath, this._serverKeyPath,
-      {this.algorithm: ROUND_ROBIN, this.sessionAware: true}) {
+      {LoadBalancingAlgorithm algorithm,
+      bool debug: false,
+      this.sessionAware: true})
+      : super(debug: debug == true) {
     _secure = true;
+    _algorithm = algorithm ?? ROUND_ROBIN;
+    storeOriginalBuffer = true;
   }
 
   final StreamController<Endpoint> _onBoot = new StreamController<Endpoint>();
   final StreamController<Endpoint> _onCrash = new StreamController<Endpoint>();
-  final StreamController<HttpRequest> _onErrored =
-      new StreamController<HttpRequest>();
-  final StreamController _fatalErrorStream = new StreamController();
-  final StreamController<HttpRequest> _onHandled =
-      new StreamController<HttpRequest>();
 
   /// Fired whenever a new server is started.
   Stream<Endpoint> get onBoot => _onBoot.stream;
@@ -65,78 +59,51 @@ class LoadBalancer extends Angel {
   /// This can easily be hooked to spawn a new instance automatically.
   Stream<Endpoint> get onCrash => _onCrash.stream;
 
-  /// Fired whenever a failure to respond occurs. Use this to deliver an error message.
-  Stream<HttpRequest> get onErrored => _onErrored.stream;
-
-  /// Fired when a fatal error occurs while trying to dispatch a request.
-  Stream get onDistributionError => _fatalErrorStream.stream;
-
-  /// Fired whenever a client is responded to successfully.
-  Stream<HttpRequest> get onHandled => _onHandled.stream;
-
-  /// The socket we are listening on.
-  ServerSocket get socket => _socket;
-
   /// Forwards a request to the [endpoint].
-  Future<HttpClientResponse> dispatchRequest(HttpRequest request, Endpoint endpoint) async {
-    var rq = await _client.open(request.method, endpoint.address.address,
-        endpoint.port, request.uri.toString());
+  Future<HttpClientResponse> dispatchRequest(
+      RequestContext req, Endpoint endpoint) async {
+    var rq = await _client.open(req.method, endpoint.address.address,
+        endpoint.port, req.uri.toString());
 
-    if (request.headers.contentType != null)
-      rq.headers.contentType = request.headers.contentType;
+    if (req.headers.contentType != null)
+      rq.headers.contentType = req.headers.contentType;
 
-    rq.cookies.addAll(request.cookies);
-    copyHeaders(request.headers, rq.headers);
+    rq.cookies.addAll(req.cookies);
+    copyHeaders(req.headers, rq.headers);
 
-    if (request.headers[HttpHeaders.ACCEPT] == null) {
-      request.headers.set(HttpHeaders.ACCEPT, '*/*');
+    if (req.headers[HttpHeaders.ACCEPT] == null) {
+      req.headers.set(HttpHeaders.ACCEPT, '*/*');
     }
 
     rq.headers
-      ..add('X-Forwarded-For', request.connectionInfo.remoteAddress.address)
-      ..add('X-Forwarded-Port', request.connectionInfo.remotePort.toString())
-      ..add(
-          'X-Forwarded-Host',
-          request.headers.host ??
-              request.headers.value(HttpHeaders.HOST) ??
-              'none')
+      ..add('X-Forwarded-For', req.ip)
+      ..add('X-Forwarded-Port', req.io.connectionInfo.remotePort.toString())
+      ..add('X-Forwarded-Host',
+          req.headers.host ?? req.headers.value(HttpHeaders.HOST) ?? 'none')
       ..add('X-Forwarded-Proto', _secure ? 'https' : 'http');
-    await rq.addStream(request);
+
+    if (req.originalBuffer.isNotEmpty) rq.add(req.originalBuffer);
     return await rq.close();
   }
 
-  @override
-  Future handleRequest(HttpRequest request) async {
-    try {
-      for (var interceptor in requestInterceptors) {
-        if (await interceptor(request) != true) return;
-      }
-
-      var endpoint = await algorithm.nextEndpoint(this, request);
-
-      if (endpoint == null) {
-        await super.handleRequest(request);
-        return;
-      }
+  /// Angel middleware to distribute requests.
+  RequestHandler handler() {
+    return (RequestContext req, ResponseContext res) async {
+      var endpoint = await algorithm.nextEndpoint(this, req);
+      if (endpoint == null) return true;
 
       try {
-        var rs = await dispatchRequest(request, endpoint);
-
-        for (var interceptor in responseInterceptors) {
-          if (await interceptor(response) != true) return;
-        }
-
-        final HttpResponse r = request.response;
-        await algorithm.pipeResponse(rs, r);
-        return;
+        var rs = await dispatchRequest(req, endpoint);
+        /*res
+          ..willCloseItself = true
+          ..end();*/
+        await algorithm.pipeResponse(rs, res);
+        return false;
       } catch (e) {
         triggerCrash(endpoint);
         rethrow;
       }
-    } catch (e) {
-      _fatalErrorStream.add(e);
-      _onErrored.add(request);
-    }
+    };
   }
 
   /// Spawns a number of instances via isolates. This is the preferred method.
@@ -171,18 +138,18 @@ class LoadBalancer extends Angel {
         }
       });
 
-      onError.listen(_fatalErrorStream.add);
-
-      onExit.listen((_) {
-        algorithm.onCrashed(this, isolate);
-      });
+      void mayday(_) => algorithm.onCrashed(this, isolate);
+      onError.listen(mayday);
+      onExit.listen(mayday);
     }
 
     return spawned;
   }
 
   @override
-  Future<HttpServer> startServer([InternetAddress address, int port]) {
+  Future<HttpServer> startServer([InternetAddress address, int port]) async {
+    after.insert(0, handler());
+
     if (_secure) {
       var certificateChain =
           Platform.script.resolve(_certificateChainPath).toFilePath();
@@ -192,14 +159,15 @@ class LoadBalancer extends Angel {
       serverContext.usePrivateKey(serverKey,
           password: password ?? rs.randomAlphaNumeric(8));
 
-      return HttpServer.bindSecure(
+      _server = await HttpServer.bindSecure(
           address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0, serverContext);
-    }
+      _server.listen(handleRequest);
+    } else
+      _server = await super.startServer(address, port);
 
-    return super.startServer(address, port);
+    print("Load balancer using '${algorithm.name}' algorithm");
+    return _server;
   }
 
-  void triggerCrash(Endpoint endpoint) {
-    _onCrash.add(endpoint);
-  }
+  void triggerCrash(Endpoint endpoint) => _onCrash.add(endpoint);
 }
