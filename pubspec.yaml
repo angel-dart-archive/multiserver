@@ -2,7 +2,7 @@ name: angel_multiserver
 description: Support for running Angel applications across multiple servers.
 environment:
   sdk: ">=1.19.0"
-version: 1.0.0-beta
+version: 1.0.0
 author: Tobe O <thosakwe@gmail.com>
 homepage: https://github.com/angel-dart/angel_multiserver
 dependencies:
