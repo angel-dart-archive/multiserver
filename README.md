@@ -21,9 +21,9 @@ The default algorithm is a simple round-robin, but
 it can be extended for your own purposes.
 
 Three load-balancing algorithms are included:
-* `ROUND_ROBIN`
+* `ROUND_ROBIN` (default)
+* `LEAST_LATENCY`
 * `STICKY_SESSION`
-* `FASTEST_RESPONSE`
 
 # Session Synchronization
 

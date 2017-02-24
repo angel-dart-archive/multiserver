@@ -5,10 +5,10 @@ import 'package:angel_errors/angel_errors.dart';
 import 'package:angel_framework/angel_framework.dart';
 import 'package:angel_multiserver/angel_multiserver.dart';
 
-final Uri cluster = Platform.script.resolve('clusters/fastest_response.dart');
+final Uri cluster = Platform.script.resolve('clusters/least_latency.dart');
 
 main() async {
-  var loadBalancer = new LoadBalancer(algorithm: FASTEST_RESPONSE);
+  var loadBalancer = new LoadBalancer(algorithm: LEAST_LATENCY);
   await loadBalancer.spawnIsolates(cluster, count: 5);
 
   // Auto-spawn a new instance on crash

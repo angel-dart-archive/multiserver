@@ -10,7 +10,7 @@ import 'package:angel_framework/angel_framework.dart';
 final LoadBalancingAlgorithm ROUND_ROBIN = new _RoundRobinAlgorithm();
 
 /// An algorithm that chooses the fastest-responding server on each request.
-final LoadBalancingAlgorithm FASTEST_RESPONSE = new _FastestResponse();
+final LoadBalancingAlgorithm LEAST_LATENCY = new _LeastLatency();
 
 /// An algorithm that matches the same clients to the same servers on each request.
 final LoadBalancingAlgorithm STICKY_SESSION = new _StickySessionAlgorithm();
@@ -51,6 +51,8 @@ class _RoundRobinAlgorithm extends LoadBalancingAlgorithm {
   int _index = -1;
 
   _RoundRobinAlgorithm() : super('round-robin');
+
+  _RoundRobinAlgorithm.named(String name) : super(name);
 
   Future<Endpoint> nextInLine(LoadBalancer loadBalancer) async {
     if (_endpoints.isEmpty) return null;
@@ -95,7 +97,9 @@ class _RoundRobinAlgorithm extends LoadBalancingAlgorithm {
       _endpoints.add(endpoint);
 }
 
-class _FastestResponse extends _RoundRobinAlgorithm {
+class _LeastLatency extends _RoundRobinAlgorithm {
+  _LeastLatency():super.named('least-latency');
+
   @override
   Future<Endpoint> nextInLine(LoadBalancer loadBalancer) async {
     if (_endpoints.isEmpty) return null;

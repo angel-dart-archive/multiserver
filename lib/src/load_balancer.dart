@@ -29,10 +29,15 @@ class LoadBalancer extends Angel {
   /// synchronized sessions.
   final bool sessionAware;
 
+  /// The maximum amount of time to wait for a client server to respond before
+  /// throwing a `504 Gateway Timeout` error.
+  final int timeoutThreshold;
+
   LoadBalancer(
       {LoadBalancingAlgorithm algorithm,
       bool debug: false,
-      this.sessionAware: true})
+      this.sessionAware: true,
+      this.timeoutThreshold: 5000})
       : super(debug: debug == true) {
     _algorithm = algorithm ?? ROUND_ROBIN;
     storeOriginalBuffer = true;
@@ -41,7 +46,8 @@ class LoadBalancer extends Angel {
   LoadBalancer.secure(this._certificateChainPath, this._serverKeyPath,
       {LoadBalancingAlgorithm algorithm,
       bool debug: false,
-      this.sessionAware: true})
+      this.sessionAware: true,
+      this.timeoutThreshold: 5000})
       : super(debug: debug == true) {
     _secure = true;
     _algorithm = algorithm ?? ROUND_ROBIN;
@@ -88,21 +94,37 @@ class LoadBalancer extends Angel {
 
   /// Angel middleware to distribute requests.
   RequestHandler handler() {
-    return (RequestContext req, ResponseContext res) async {
-      var endpoint = await algorithm.nextEndpoint(this, req);
-      if (endpoint == null) return true;
+    return (RequestContext req, ResponseContext res) {
+      return algorithm.nextEndpoint(this, req).then((endpoint) {
+        if (endpoint == null) return true;
+        var c = new Completer();
 
-      try {
-        var rs = await dispatchRequest(req, endpoint);
-        /*res
-          ..willCloseItself = true
-          ..end();*/
-        await algorithm.pipeResponse(rs, res);
-        return false;
-      } catch (e) {
-        triggerCrash(endpoint);
-        rethrow;
-      }
+        Timer timer;
+
+        timer =
+            new Timer(new Duration(milliseconds: timeoutThreshold ?? 5000), () {
+          if (timer.isActive) {
+            timer.cancel();
+            c.completeError(new AngelHttpException(null,
+                message: '504 Gateway Timeout', statusCode: 504));
+          }
+        });
+
+        dispatchRequest(req, endpoint).then((rs) async {
+          if (timer.isActive) {
+            timer.cancel();
+            await algorithm.pipeResponse(rs, res);
+            c.complete(false);
+          }
+        }).catchError((e) {
+          if (timer.isActive) timer.cancel();
+          
+          if (e is! AngelHttpException) triggerCrash(endpoint);
+          throw e;
+        });
+
+        return c.future;
+      });
     };
   }
 
@@ -148,7 +170,9 @@ class LoadBalancer extends Angel {
 
   @override
   Future<HttpServer> startServer([InternetAddress address, int port]) async {
-    after.insert(0, handler());
+    justBeforeStart.add((Angel app) {
+      app.after.insert(0, handler());
+    });
 
     if (_secure) {
       var certificateChain =
