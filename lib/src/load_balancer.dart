@@ -206,16 +206,17 @@ class LoadBalancer extends Angel {
 
   @override
   Future<HttpServer> startServer([InternetAddress address, int port]) async {
-    justBeforeStart.add((Angel app) {
+    if (_serverGenerator != null) {
       app.after.insert(0, handler());
-    });
-
-    if (_serverGenerator != null)
       _server = (await _serverGenerator(
           address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0))
         ..listen(handleRequest);
-    else
+    } else {
+      justBeforeStart.add((Angel app) {
+        app.after.insert(0, handler());
+      });
       _server = await super.startServer(address, port);
+    }
 
     print("Load balancer using '${algorithm.name}' algorithm");
     return _server;
