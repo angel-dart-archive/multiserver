@@ -16,8 +16,9 @@ class LoadBalancer extends Angel {
   LoadBalancingAlgorithm _algorithm;
   String _certificateChainPath, _serverKeyPath;
   final HttpClient _client = new HttpClient();
-  bool _secure = false;
   HttpServer _server;
+
+  ServerGenerator _serverGenerator = HttpServer.bind;
 
   /// Distributes requests between servers.
   LoadBalancingAlgorithm get algorithm => _algorithm;
@@ -43,15 +44,50 @@ class LoadBalancer extends Angel {
     storeOriginalBuffer = true;
   }
 
-  LoadBalancer.secure(this._certificateChainPath, this._serverKeyPath,
+  factory LoadBalancer.custom(ServerGenerator serverGenerator,
       {LoadBalancingAlgorithm algorithm,
       bool debug: false,
-      this.sessionAware: true,
-      this.timeoutThreshold: 5000})
-      : super(debug: debug == true) {
-    _secure = true;
-    _algorithm = algorithm ?? ROUND_ROBIN;
-    storeOriginalBuffer = true;
+      bool sessionAware: true,
+      int timeoutThreshold: 5000}) {
+    return new LoadBalancer(
+        algorithm: algorithm,
+        debug: debug == true,
+        sessionAware: sessionAware == true,
+        timeoutThreshold: timeoutThreshold ?? 5000)
+      .._serverGenerator = serverGenerator;
+  }
+
+  factory LoadBalancer.fromSecurityContext(SecurityContext context,
+      {LoadBalancingAlgorithm algorithm,
+      bool debug: false,
+      bool sessionAware: true,
+      int timeoutThreshold: 5000}) {
+    return new LoadBalancer.custom(
+        (InternetAddress address, int port) async =>
+            HttpServer.bindSecure(address, port, context),
+        algorithm: algorithm,
+        debug: debug == true,
+        sessionAware: sessionAware == true,
+        timeoutThreshold: timeoutThreshold ?? 5000);
+  }
+
+  factory LoadBalancer.secure(String certificateChainPath, String serverKeyPath,
+      {LoadBalancingAlgorithm algorithm,
+      bool debug: false,
+      String password,
+      bool sessionAware: true,
+      int timeoutThreshold: 5000}) {
+    var context = new SecurityContext()
+      ..useCertificateChain(
+          Platform.script.resolve(certificateChainPath).toFilePath(),
+          password: password)
+      ..usePrivateKey(Platform.script.resolve(serverKeyPath).toFilePath(),
+          password: password);
+    return new LoadBalancer.fromSecurityContext(context,
+        algorithm: algorithm,
+        debug: debug == true,
+        sessionAware: sessionAware == true,
+        timeoutThreshold: timeoutThreshold ?? 5000);
   }
 
   final StreamController<Endpoint> _onBoot = new StreamController<Endpoint>();
@@ -118,7 +154,7 @@ class LoadBalancer extends Angel {
           }
         }).catchError((e) {
           if (timer.isActive) timer.cancel();
-          
+
           if (e is! AngelHttpException) triggerCrash(endpoint);
           throw e;
         });
@@ -174,19 +210,10 @@ class LoadBalancer extends Angel {
       app.after.insert(0, handler());
     });
 
-    if (_secure) {
-      var certificateChain =
-          Platform.script.resolve(_certificateChainPath).toFilePath();
-      var serverKey = Platform.script.resolve(_serverKeyPath).toFilePath();
-      var serverContext = new SecurityContext();
-      serverContext.useCertificateChain(certificateChain);
-      serverContext.usePrivateKey(serverKey,
-          password: password ?? rs.randomAlphaNumeric(8));
-
-      _server = await HttpServer.bindSecure(
-          address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0, serverContext);
-      _server.listen(handleRequest);
-    } else
+    if (_serverGenerator != null)
+      _server = await _serverGenerator(
+          address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0);
+    else
       _server = await super.startServer(address, port);
 
     print("Load balancer using '${algorithm.name}' algorithm");
