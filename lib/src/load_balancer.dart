@@ -211,8 +211,9 @@ class LoadBalancer extends Angel {
     });
 
     if (_serverGenerator != null)
-      _server = await _serverGenerator(
-          address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0);
+      _server = (await _serverGenerator(
+          address ?? InternetAddress.LOOPBACK_IP_V4, port ?? 0))
+        ..listen(handleRequest);
     else
       _server = await super.startServer(address, port);
 
