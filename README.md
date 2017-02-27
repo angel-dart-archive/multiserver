@@ -1,5 +1,7 @@
 # multiserver
-Support for running Angel applications across multiple servers.
+Support for running Dart applications, specifically
+[Angel](https://github.com/angel-dart/angel)
+apps, across multiple servers.
 
 The idea is that you have one master server running the load balancer,
 and the child applications call a session synchronizer.
@@ -24,6 +26,8 @@ Three load-balancing algorithms are included:
 * `ROUND_ROBIN` (default)
 * `LEAST_LATENCY`
 * `STICKY_SESSION`
+
+The LoadBalancer also supports HTTPS and WebSockets. Bam.
 
 # Session Synchronization
 

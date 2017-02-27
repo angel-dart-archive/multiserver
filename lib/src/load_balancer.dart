@@ -14,8 +14,8 @@ final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
 /// The default implementation uses a simple round-robin.
 class LoadBalancer extends Angel {
   LoadBalancingAlgorithm _algorithm;
-  String _certificateChainPath, _serverKeyPath;
   final HttpClient _client = new HttpClient();
+  bool _secure = false;
   HttpServer _server;
 
   ServerGenerator _serverGenerator = HttpServer.bind;
@@ -68,7 +68,7 @@ class LoadBalancer extends Angel {
         algorithm: algorithm,
         debug: debug == true,
         sessionAware: sessionAware == true,
-        timeoutThreshold: timeoutThreshold ?? 5000);
+        timeoutThreshold: timeoutThreshold ?? 5000).._secure = true;
   }
 
   factory LoadBalancer.secure(String certificateChainPath, String serverKeyPath,
@@ -122,7 +122,8 @@ class LoadBalancer extends Angel {
       ..add('X-Forwarded-Port', req.io.connectionInfo.remotePort.toString())
       ..add('X-Forwarded-Host',
           req.headers.host ?? req.headers.value(HttpHeaders.HOST) ?? 'none')
-      ..add('X-Forwarded-Proto', _secure ? 'https' : 'http');
+      ..add('X-Forwarded-Proto',
+          req.uri.scheme == 'https' ? 'https' : (_secure ? 'https' : 'http'));
 
     if (req.originalBuffer.isNotEmpty) rq.add(req.originalBuffer);
     return await rq.close();
@@ -146,18 +147,76 @@ class LoadBalancer extends Angel {
           }
         });
 
-        dispatchRequest(req, endpoint).then((rs) async {
-          if (timer.isActive) {
-            timer.cancel();
-            await algorithm.pipeResponse(rs, res);
-            c.complete(false);
-          }
-        }).catchError((e) {
-          if (timer.isActive) timer.cancel();
+        if (WebSocketTransformer.isUpgradeRequest(req.io)) {
+          var wsUrl =
+              'ws://${endpoint.address.address}:${endpoint.port}${req.uri.path}';
 
-          if (e is! AngelHttpException) triggerCrash(endpoint);
-          throw e;
-        });
+          var headers = {
+            'X-Forwarded-For': req.ip,
+            'X-Forwarded-Port': req.io.connectionInfo.remotePort.toString(),
+            'X-Forwarded-Host': req.headers.host ??
+                req.headers.value(HttpHeaders.HOST) ??
+                'none',
+            'X-Forwarded-Proto': req.uri.scheme == 'https'
+                ? 'https'
+                : (_secure ? 'https' : 'http')
+          };
+
+          req.headers.forEach((k, v) {
+            headers[k] = v.join(',');
+          });
+
+          return WebSocket
+              .connect(wsUrl, headers: headers)
+              .then((serverSide) async {
+            if (timer.isActive) timer.cancel();
+
+            // MITM WebSocket data
+            var clientSide = await WebSocketTransformer.upgrade(req.io);
+
+            Function onDone(WebSocket sock, String message) {
+              return () async {
+                await sock.close(1001, 'WebSocket reverse proxy failure');
+                await res.io.close();
+                res
+                  ..willCloseItself = true
+                  ..end();
+                c.complete(false);
+              };
+            }
+
+            serverSide.listen(clientSide.add,
+                cancelOnError: true,
+                onDone: onDone(serverSide, 'WebSocket reverse proxy failure'),
+                onError: c.completeError);
+
+            clientSide.listen(serverSide.add,
+                cancelOnError: true,
+                onDone: onDone(
+                    clientSide, 'WebSocket reverse proxy client disconnect'),
+                onError: c.completeError);
+
+            return c.future;
+          }).catchError((e) {
+            if (timer.isActive) timer.cancel();
+
+            if (e is! AngelHttpException) triggerCrash(endpoint);
+            throw e;
+          });
+        } else {
+          dispatchRequest(req, endpoint).then((rs) async {
+            if (timer.isActive) {
+              timer.cancel();
+              await algorithm.pipeResponse(rs, res);
+              c.complete(false);
+            }
+          }).catchError((e) {
+            if (timer.isActive) timer.cancel();
+
+            if (e is! AngelHttpException) triggerCrash(endpoint);
+            throw e;
+          });
+        }
 
         return c.future;
       });

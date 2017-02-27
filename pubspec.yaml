@@ -1,8 +1,8 @@
 name: angel_multiserver
-description: Support for running Angel applications across multiple servers.
+description: Framework-agnostic load balancer, as well as Angel-specific scaling support.
 environment:
   sdk: ">=1.19.0"
-version: 1.0.4
+version: 1.0.5
 author: Tobe O <thosakwe@gmail.com>
 homepage: https://github.com/angel-dart/angel_multiserver
 dependencies:
@@ -13,9 +13,10 @@ dependencies:
   random_string: ^0.0.1
   redis_client: ^0.1.16
 dev_dependencies:
-  angel_compress: ^1.0.0-dev
+  angel_compress: ^1.0.0
   angel_diagnostics: ^1.0.0-dev
   angel_errors: ^1.0.0-dev
-  angel_static: ^1.1.0-dev
+  angel_static: ^1.1.0
+  angel_websocket: ^1.0.0
   http: ^0.11.3
   test: ^0.12.15
