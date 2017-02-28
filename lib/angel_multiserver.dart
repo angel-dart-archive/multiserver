@@ -6,6 +6,7 @@ import 'package:angel_framework/angel_framework.dart';
 export 'src/synchronizers/synchronizers.dart';
 export 'src/algorithm.dart';
 export 'src/defs.dart';
+export 'src/force_https.dart';
 export 'src/load_balancer.dart';
 export 'src/cache.dart';
 export 'src/session_synchronizer.dart';

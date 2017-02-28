@@ -53,3 +53,6 @@ main() async {
         new MongoSessionSynchronizer(db.collection('sessions')));
 }
 ```
+
+# WebSocket Synchronization
+The multiserver is also bundled with a `MongoWebSocketSynchronizer`.

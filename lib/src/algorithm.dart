@@ -39,6 +39,7 @@ abstract class LoadBalancingAlgorithm {
     res.statusCode = rs.statusCode;
     res.headers.forEach(res.io.headers.set);
     rs.headers.forEach(res.io.headers.set);
+    res.headers[HttpHeaders.SERVER] = 'angel_multiserver';
     //await rs.pipe(res.io);
     await rs.forEach(res.buffer.add);
   }

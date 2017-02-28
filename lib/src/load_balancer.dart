@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:io';
 import 'package:angel_framework/angel_framework.dart';
-import 'package:random_string/random_string.dart' as rs;
 import 'algorithm.dart';
 import 'defs.dart';
 
