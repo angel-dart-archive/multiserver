@@ -29,6 +29,9 @@ Three load-balancing algorithms are included:
 
 The LoadBalancer also supports HTTPS and WebSockets. Bam.
 
+You can also provide a `maxConcurrentConnections` to pool
+server resources and prevent premature crashes.
+
 # Session Synchronization
 
 This package also includes three `SessionSynchronizer` classes:

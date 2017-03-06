@@ -48,6 +48,12 @@ class MongoWebSocketSynchronizer extends PollingWebSocketSynchronizer {
       : super(pollInterval: pollInterval);
 
   @override
+  Future deleteOldEvents() async {
+    var minTimestamp = new DateTime.now().subtract(new Duration(milliseconds: maxAge));
+    await collection.remove(where.lt('timestamp', minTimestamp.millisecondsSinceEpoch));
+  }
+
+  @override
   Future<List<WebSocketEvent>> getOutstandingEvents() async {
     var timestamp = (_lastTime ?? (_lastTime = new DateTime.now())).toUtc();
     var msAfterEpoch = timestamp.millisecondsSinceEpoch;

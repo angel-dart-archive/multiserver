@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:io';
 import 'package:angel_framework/angel_framework.dart';
+import 'package:pool/pool.dart';
 import 'algorithm.dart';
 import 'defs.dart';
 
@@ -14,6 +15,7 @@ final RegExp _header = new RegExp(r'([^:]+):\s*([\n]+)');
 class LoadBalancer extends Angel {
   LoadBalancingAlgorithm _algorithm;
   final HttpClient _client = new HttpClient();
+  Pool _pool;
   bool _secure = false;
   HttpServer _server;
 
@@ -24,6 +26,14 @@ class LoadBalancer extends Angel {
 
   @override
   HttpServer get httpServer => _server ?? super.httpServer;
+
+  /// The maximum amount of concurrently-handled HTTP connections.
+  ///
+  /// If `null` (default), no such rate limit will be enforced.
+  final int maxConcurrentConnections;
+
+  /// The active resource pool. May be `null` if no [maxConcurrentConnections] threshold was provided.
+  Pool get pool => _pool;
 
   /// If set to `true`, the load balancer will manage
   /// synchronized sessions.
@@ -36,21 +46,27 @@ class LoadBalancer extends Angel {
   LoadBalancer(
       {LoadBalancingAlgorithm algorithm,
       bool debug: false,
+      this.maxConcurrentConnections,
       this.sessionAware: true,
       this.timeoutThreshold: 5000})
       : super(debug: debug == true) {
     _algorithm = algorithm ?? ROUND_ROBIN;
     storeOriginalBuffer = true;
+
+    if (maxConcurrentConnections != null)
+      _pool = new Pool(maxConcurrentConnections, timeout: new Duration(milliseconds: timeoutThreshold));
   }
 
   factory LoadBalancer.custom(ServerGenerator serverGenerator,
       {LoadBalancingAlgorithm algorithm,
       bool debug: false,
       bool sessionAware: true,
+      int maxConcurrentConnections,
       int timeoutThreshold: 5000}) {
     return new LoadBalancer(
         algorithm: algorithm,
         debug: debug == true,
+        maxConcurrentConnections: maxConcurrentConnections,
         sessionAware: sessionAware == true,
         timeoutThreshold: timeoutThreshold ?? 5000)
       .._serverGenerator = serverGenerator;
@@ -60,12 +76,14 @@ class LoadBalancer extends Angel {
       {LoadBalancingAlgorithm algorithm,
       bool debug: false,
       bool sessionAware: true,
+      int maxConcurrentConnections,
       int timeoutThreshold: 5000}) {
     return new LoadBalancer.custom(
         (InternetAddress address, int port) async =>
             HttpServer.bindSecure(address, port, context),
         algorithm: algorithm,
         debug: debug == true,
+        maxConcurrentConnections: maxConcurrentConnections,
         sessionAware: sessionAware == true,
         timeoutThreshold: timeoutThreshold ?? 5000).._secure = true;
   }
@@ -75,6 +93,7 @@ class LoadBalancer extends Angel {
       bool debug: false,
       String password,
       bool sessionAware: true,
+      int maxConcurrentConnections,
       int timeoutThreshold: 5000}) {
     var context = new SecurityContext()
       ..useCertificateChain(
@@ -85,6 +104,7 @@ class LoadBalancer extends Angel {
     return new LoadBalancer.fromSecurityContext(context,
         algorithm: algorithm,
         debug: debug == true,
+        maxConcurrentConnections: maxConcurrentConnections,
         sessionAware: sessionAware == true,
         timeoutThreshold: timeoutThreshold ?? 5000);
   }
@@ -220,6 +240,14 @@ class LoadBalancer extends Angel {
         return c.future;
       });
     };
+  }
+
+  @override
+  handleRequest(HttpRequest request) async {
+    if (_pool == null) return await super.handleRequest(request);
+    else {
+      return await _pool.withResource(() => super.handleRequest(request));
+    }
   }
 
   /// Spawns a number of instances via isolates. This is the preferred method.
