@@ -15,5 +15,6 @@ main(args, [SendPort sendPort]) async {
 
   await app.configure(logRequests(new File('log.txt')));
   var server = await app.startServer();
+  print('Spawned cache node at http://${server.address.address}:${server.port}');
   sendPort?.send([server.address.address, server.port]);
 }
