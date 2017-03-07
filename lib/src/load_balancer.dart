@@ -54,7 +54,8 @@ class LoadBalancer extends Angel {
     storeOriginalBuffer = true;
 
     if (maxConcurrentConnections != null)
-      _pool = new Pool(maxConcurrentConnections, timeout: new Duration(milliseconds: timeoutThreshold));
+      _pool = new Pool(maxConcurrentConnections,
+          timeout: new Duration(milliseconds: timeoutThreshold));
   }
 
   factory LoadBalancer.custom(ServerGenerator serverGenerator,
@@ -244,9 +245,15 @@ class LoadBalancer extends Angel {
 
   @override
   handleRequest(HttpRequest request) async {
-    if (_pool == null) return await super.handleRequest(request);
+    if (_pool == null)
+      return await super.handleRequest(request);
     else {
-      return await _pool.withResource(() => super.handleRequest(request));
+      var resource = await _pool.request();
+      try {
+        await super.handleRequest(request);
+      } finally {
+        resource.release();
+      }
     }
   }
 

@@ -6,7 +6,7 @@ apps, across multiple servers.
 The idea is that you have one master server running the load balancer,
 and the child applications call a session synchronizer.
 
-Dedicated WebSocket support will come eventually.
+Dedicated WebSocket support is also present.
 
 See the [examples](example);
 
