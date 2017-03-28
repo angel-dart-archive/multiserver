@@ -134,7 +134,7 @@ class LoadBalancer extends Angel {
     copyHeaders(req.headers, rq.headers);
 
     if (req.headers[HttpHeaders.ACCEPT] == null) {
-      req.headers.set(HttpHeaders.ACCEPT, '*/*');
+      rq.headers.set(HttpHeaders.ACCEPT, '*/*');
     }
 
     rq.headers

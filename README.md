@@ -8,7 +8,7 @@ and the child applications call a session synchronizer.
 
 Dedicated WebSocket support is also present.
 
-See the [examples](example);
+See the [examples](example).
 
 # Response Caching
 This plug-in works on any `Angel` server, not just a `LoadBalancer`.

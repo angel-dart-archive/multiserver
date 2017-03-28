@@ -2,7 +2,7 @@ name: angel_multiserver
 description: Framework-agnostic load balancer, as well as Angel-specific scaling support.
 environment:
   sdk: ">=1.19.0"
-version: 1.0.8
+version: 1.0.9
 author: Tobe O <thosakwe@gmail.com>
 homepage: https://github.com/angel-dart/angel_multiserver
 dependencies:
