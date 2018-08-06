@@ -1,3 +1,8 @@
+# DEPRECATED
+The features in this package have now been implemented better in other packages, like `angel_cache`
+The load balancing functionality, in most cases, should be performed by another server, like `nginx` or Apache.
+Lastly, writing a `WebSocketSynchronizer` for your own application is trivial, and forcing a dependency on multiple databases is not realistic for most projects.
+
 # multiserver
 Support for running Dart applications, specifically
 [Angel](https://github.com/angel-dart/angel)
